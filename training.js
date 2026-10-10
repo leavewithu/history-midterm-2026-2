@@ -63,9 +63,9 @@
     const c=memoryQueue[memoryPosition];
     $('#memory-topic-label').textContent=`주제 ${c.topic} · ${topics[c.topic].title}`;
     $('#memory-position').textContent=`${memoryPosition+1} / ${memoryQueue.length}`;
-    $('#memory-prompt').textContent=c.asks[0];
+    $('#memory-prompt').textContent=c.recall.prompt;
     $('#memory-answer').value='';
-    $('#memory-correct').textContent=c.answer;
+    $('#memory-correct').textContent=c.recall.answer;
     $('#memory-detail').textContent=c.detail;
     $('#memory-source').innerHTML=sources(c.topic,true);
     $('#memory-solution').hidden=true;

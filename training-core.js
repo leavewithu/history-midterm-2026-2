@@ -17,7 +17,10 @@
     const concepts = [], questions = [];
     for (const group of data.groups) group.items.forEach((item, i) => {
       const id = `T${group.topic}-K${i + 1}`;
-      const concept = { ...item, id, topic:group.topic };
+      // Keep a cached pre-update page readable until its HTML is refreshed.
+      const recall = data.recall ? data.recall[id] : {prompt:item.asks[0],answer:item.answer};
+      if (!recall?.prompt || !recall.answer) throw Error(`암기용 질문과 정답이 없습니다: ${id}`);
+      const concept = { ...item, id, topic:group.topic, recall };
       concepts.push(concept);
       item.asks.forEach((prompt, v) => {
         const type = i === 2 || i === 5 ? 'short' : 'choice';
