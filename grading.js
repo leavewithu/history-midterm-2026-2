@@ -40,6 +40,7 @@
         result.append(node);
       }
       score.textContent = `정답 일치 ${matched} / ${questions.length} · 불일치 ${review} · 미응답 ${empty}`;
+      document.dispatchEvent(new CustomEvent('history-basic-grade',{detail:score.textContent}));
       status.textContent = '자동 일치 결과입니다. 주관식의 다른 타당한 표현은 답지와 비교해 최종 확인하세요.';
       applyFilter();
     } catch (error) { status.textContent = error instanceof Error ? error.message : '답안 파일을 읽지 못했습니다.'; }

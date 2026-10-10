@@ -10,6 +10,7 @@
   const icons=()=>window.lucide?.createIcons({attrs:{width:18,height:18,'aria-hidden':'true','stroke-width':1.8}});
   const date=value=>new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
   const uid=()=>`s-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
+  const activity=(type,details)=>window.HistoryActivity?.record(type,details);
   let state=H.emptyState(), storageOK=true, lastSavedRaw=null, tab='memory', session=null, shownAttempt=null;
   let memoryFilter='due', memoryQueue=[], memoryPosition=0, memoryMissed=[], memoryRound=1, memoryReady=false, memoryStarted=false, wrongFilter='open',cloud=null;
   function message(text,bad=false) {
@@ -45,6 +46,7 @@
     if(name==='exams' && !session && !shownAttempt) renderExams();
     if(name==='wrong') renderWrong();
     if(name==='history') renderHistory();
+    if(name==='activity') window.HistoryActivity?.show();
     badge(); icons();
   }
   function updateMemoryQueue() {
@@ -89,10 +91,12 @@
   $('#memory-reveal').addEventListener('click',()=>{
     if(memoryPosition>=memoryQueue.length) return;
     memoryStarted=true;$('#memory-solution').hidden=false;$('#memory-reveal').hidden=true;
+    const c=memoryQueue[memoryPosition];activity('reveal',{topic:c.topic,ref:c.id,label:c.name});
   });
   for(const rating of ['hard','known']) $(`#memory-${rating}`).addEventListener('click',()=>{
     const c=memoryQueue[memoryPosition]; if(!c||$('#memory-solution').hidden) return;
     H.rateMemory(bank,state,c.id,rating);save();
+    activity('rate',{topic:c.topic,ref:c.id,label:c.name,value:rating==='known'?'혼자 맞혔어요':'다시 외울게요'});
     if(rating==='hard') memoryMissed.push(c);
     memoryPosition++;
     renderMemory();
@@ -103,18 +107,21 @@
     memoryQueue=H.shuffle(pending,uid());
     if(memoryQueue.length>1&&memoryQueue[0].id===last) memoryQueue.push(memoryQueue.shift());
     memoryPosition=0;memoryMissed=[];memoryRound++;memoryStarted=true;renderMemory();
+    activity('round',{ref:'memory',label:'모은 카드 섞어 복습',value:`${memoryRound}바퀴 · ${pending.length}개`});
   });
-  $('#memory-topic').addEventListener('change',()=>{updateMemoryQueue();renderMemory();});
+  $('#memory-topic').addEventListener('change',()=>{updateMemoryQueue();renderMemory();activity('filter',{topic:Number($('#memory-topic').value)||0,ref:'memory',label:'암기 주제 선택',value:$('#memory-topic').selectedOptions[0].textContent});});
   $('#memory-shuffle').addEventListener('click',()=>{
     if(memoryPosition>=memoryQueue.length) return;
     memoryStarted=true;
     memoryQueue.splice(memoryPosition,memoryQueue.length-memoryPosition,...H.shuffle(memoryQueue.slice(memoryPosition),uid()));
     renderMemory();
+    activity('filter',{ref:'memory',label:'남은 암기 카드 섞기'});
   });
   document.querySelectorAll('[data-memory-filter]').forEach(b=>b.addEventListener('click',()=>{
     memoryFilter=b.dataset.memoryFilter;
     document.querySelectorAll('[data-memory-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
     updateMemoryQueue();renderMemory();
+    activity('filter',{ref:'memory',label:'암기 범위 선택',value:b.textContent});
   }));
   function renderExams() {
     $('#exam-list').hidden=false; $('#workbench').hidden=true;
@@ -131,13 +138,15 @@
     const key=`paper-${round}`;
     session=state.drafts[key] || {id:uid(),key,kind:'paper',round,title:`전 범위 혼합 ${round}회`,questionIds:H.paper(bank,round).map(q=>q.id),answers:{},updatedAt:new Date().toISOString()};
     state.drafts[key]=session; shownAttempt=null;save(); renderSession();showTab('exams');
+    activity('start',{ref:session.id,label:session.title,value:'혼합 시험 시작·이어풀기'});
   }
   function startReview(ids) {
-    if(state.drafts.review) {session=state.drafts.review;shownAttempt=null;renderSession();showTab('exams');return;}
+    if(state.drafts.review) {session=state.drafts.review;shownAttempt=null;renderSession();showTab('exams');activity('start',{ref:session.id,label:session.title,value:'변형 재시험 이어풀기'});return;}
     const questions=H.review(bank,state,ids);
     if(!questions.length) {message('재시험으로 확인할 오답이 없습니다.');return;}
     session={id:uid(),key:'review',kind:'review',round:null,title:`오답 변형 재시험 · ${questions.length}문항`,questionIds:questions.map(q=>q.id),answers:{},updatedAt:new Date().toISOString()};
     state.drafts.review=session;shownAttempt=null;save();renderSession();showTab('exams');
+    activity('start',{ref:session.id,label:session.title,value:'변형 재시험 시작'});
   }
   function questionHtml(q,i,answer) {
     return `<div class="question" data-training-question="${q.id}"><${q.type==='short'?'label':'div'} class="prompt" ${q.type==='short'?`for="answer-${q.id}"`:`id="prompt-${q.id}"`}><span class="qtag">${i+1} · ${q.type==='short'?'단답형':'객관식'}</span>${e(q.prompt)}</${q.type==='short'?'label':'div'}>${q.type==='short'?`<input id="answer-${q.id}" name="${q.id}" type="text" autocomplete="off" maxlength="200" value="${e(answer||'')}">`:`<div class="options choices" role="radiogroup" aria-labelledby="prompt-${q.id}">${q.options.map((value,n)=>`<label><input type="radio" name="${q.id}" value="${e(value)}" ${answer===value?'checked':''}><span>${n+1}. ${e(value)}</span></label>`).join('')}</div>`}</div>`;
@@ -159,6 +168,7 @@
     if(!session || !session.questionIds.includes(event.target.name)) return;
     session.answers[event.target.name]=event.target.value;
     session.updatedAt=new Date().toISOString();state.drafts[session.key]=session;save();progress();
+    const q=bank.byId[event.target.name];window.HistoryActivity?.answer({ref:q.id,topic:q.topic,label:session.title+' · '+q.id,value:'답 입력 · 작성 중인 답안은 이 기기에만 보관'});
   });
   $('#exam-form').addEventListener('submit',event=>{
     event.preventDefault();if(!session) return;
@@ -166,6 +176,7 @@
     if(count&&!confirm(`미응답 ${count}문항도 오답 노트에 기록됩니다. 채점할까요?`)) return;
     try {
       const attempt=H.submit(bank,state,session,session.answers);
+      activity('submit',{ref:attempt.id,label:attempt.title,value:`${attempt.score}/${attempt.total} 정답 · ${Math.round(attempt.score/attempt.total*100)}점 · 오답 ${attempt.total-attempt.score}개`});
       session=null;save();showResult(attempt.id);
     } catch(error) {message(error.message,true);}
   });
@@ -192,6 +203,7 @@
     const button=event.target.closest('[data-recognize]');if(!button||!shownAttempt) return;
     if(!confirm('입력한 답이 정답과 같은 뜻임을 확인했나요? 정답으로 인정하고 기록을 수정합니다.')) return;
     H.recognize(bank,state,shownAttempt.id,button.dataset.recognize);save();showResult(shownAttempt.id);
+    activity('recognize',{ref:button.dataset.recognize,topic:bank.byId[button.dataset.recognize].topic,label:'같은 뜻의 답으로 직접 인정'});
   });
   $('#exam-back').addEventListener('click',()=>{session=null;shownAttempt=null;renderExams();});
   $('#print-exam').addEventListener('click',()=>window.print());
@@ -241,7 +253,7 @@
   }
   $('#history-rows').addEventListener('click',event=>{const b=event.target.closest('[data-history-attempt]');if(b) showResult(b.dataset.historyAttempt);});
   $('#backup').addEventListener('click',()=>{
-    const payload={schema:storageKey,exportedAt:new Date().toISOString(),state};
+    const payload={schema:storageKey,exportedAt:new Date().toISOString(),state,activity:window.HistoryActivity?.snapshot()};
     const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
     const localDate=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
     const a=document.createElement('a');a.href=url;a.download=`역사_암기혼합시험_학습기록_${localDate}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -252,7 +264,8 @@
     try {
       if(file.size>25*1024*1024) throw Error('기록 파일이 너무 큽니다.');
       const payload=JSON.parse(await file.text());if(payload.schema!==storageKey) throw Error('이번 암기·혼합 시험의 기록 파일이 아닙니다.');
-      state=H.merge(state,H.validate(payload.state,bank));save();session=null;shownAttempt=null;memoryReady=false;showTab(tab);
+      const restored=H.validate(payload.state,bank),restoredActivity=payload.activity&&window.HistoryActivity?.validate(payload.activity);
+      state=H.merge(state,restored);if(restoredActivity) window.HistoryActivity.restore(restoredActivity);save();session=null;shownAttempt=null;memoryReady=false;showTab(tab);
       message(`기존 기록과 합쳤습니다. 총 ${state.attempts.length}회 풀이 기록${storageOK?'':' · 브라우저 저장 불가: 다시 백업해 주세요.'}`,!storageOK);
     } catch(error) {message(error.message || '파일을 읽지 못했습니다. 기존 기록은 유지됩니다.',true);}
     event.target.value='';
@@ -270,7 +283,7 @@
     catch {message('다른 창의 저장 기록을 읽지 못했습니다. 현재 기록은 유지됩니다.',true);}
   });
   const topicParam=new URLSearchParams(location.search).get('topic');if(Object.hasOwn(topics,topicParam)) $('#memory-topic').value=topicParam;
-  const initial=location.hash.slice(1);showTab(['memory','exams','wrong','history'].includes(initial)?initial:'memory');
+  const initial=location.hash.slice(1);showTab(['memory','exams','wrong','history','activity'].includes(initial)?initial:'memory');
   if(window.HISTORY_CLOUD_URL && window.HistoryCloud) {
     $('#cloud-bar').hidden=false;
     cloud=window.HistoryCloud.connect({url:window.HISTORY_CLOUD_URL,bank,getState:()=>state,
