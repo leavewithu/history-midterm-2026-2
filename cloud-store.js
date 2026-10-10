@@ -49,7 +49,7 @@
     for(const [id,a] of Object.entries(local.attempts)) if(!remote?.attempts?.[id]) jobs.push([`attempts/${id}`,a,true]);
     for(const [id,items] of Object.entries(local.recognitions)) for(const [qid,value] of Object.entries(items))
       if(!remote?.recognitions?.[id]?.[qid]) jobs.push([`recognitions/${id}/${qid}`,value,true]);
-    for(const [id,m] of Object.entries(local.memory)) if(!remote?.memory?.[id] || remote.memory[id].updatedAt<m.updatedAt) jobs.push([`memory/${id}`,m,false]);
+    for(const [id,m] of Object.entries(local.memory)) if(!remote?.memory?.[id] || remote.memory[id].updatedAt<m.updatedAt || remote.memory[id].updatedAt===m.updatedAt && m.dueAt && !remote.memory[id].dueAt) jobs.push([`memory/${id}`,m,false]);
     return jobs;
   }
   function connect({url,bank,getState,receive,status,fetcher=root.fetch?.bind(root),schedule=root.setTimeout?.bind(root),cancel=root.clearTimeout?.bind(root)}) {

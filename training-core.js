@@ -65,6 +65,23 @@
   }
   const emptyState = () => ({ version:1, memory:{}, drafts:{}, attempts:[], wrong:{} });
   const grade = (q, answer) => Boolean(String(answer || '').trim()) && [q.answer,...q.accept].some(a=>normalize(a)===normalize(answer));
+  const memoryIntervals = [1,3,7,14,30];
+  function memoryDueAt(value) {
+    if (!value) return null;
+    return value.dueAt || new Date(Date.parse(value.updatedAt)+(value.rating==='known'?86400000:0)).toISOString();
+  }
+  function memoryDue(value,now=new Date().toISOString()) {
+    return !value || value.rating==='hard' || memoryDueAt(value)<=now;
+  }
+  function rateMemory(bank,state,id,rating,now=new Date().toISOString()) {
+    if (!Object.hasOwn(bank.byConcept,id) || !['known','hard'].includes(rating) || !Number.isFinite(Date.parse(now))) throw Error('암기 기록을 확인할 수 없습니다.');
+    const previous=state.memory[id];
+    const early=previous?.rating==='known' && !memoryDue(previous,now);
+    const streak=rating==='hard'?0:Math.min(5,early?(previous.streak||1):(previous?.rating==='known'?(previous.streak||1)+1:1));
+    const dueAt=rating==='hard'?now:early?memoryDueAt(previous):new Date(Date.parse(now)+memoryIntervals[streak-1]*86400000).toISOString();
+    state.memory[id]={rating,updatedAt:now,streak,dueAt};
+    return state.memory[id];
+  }
   function rebuildWrong(state) {
     const wrong = {};
     for (const attempt of state.attempts) for (const result of attempt.results) {
@@ -134,6 +151,10 @@
     for (const [id,value] of Object.entries(raw.memory)) {
       if (!Object.hasOwn(bank.byConcept,id) || !value || !['known','hard'].includes(value.rating) || !validDate(value.updatedAt)) fail();
       state.memory[id]={rating:value.rating,updatedAt:value.updatedAt};
+      if (value.streak!==undefined || value.dueAt!==undefined) {
+        if (!Number.isInteger(value.streak) || value.streak<0 || value.streak>5 || !validDate(value.dueAt) || (value.rating==='known'?value.streak===0:value.streak!==0)) fail();
+        state.memory[id].streak=value.streak;state.memory[id].dueAt=value.dueAt;
+      }
     }
     function questionIds(value) {
       if (!Array.isArray(value) || value.length<1 || value.length>30 || new Set(value).size!==value.length || value.some(id=>typeof id!=='string'||!Object.hasOwn(bank.byId,id))) fail();
@@ -181,7 +202,7 @@
   function merge(a,b) {
     const state=emptyState();
     for(const source of [a,b]) {
-      for(const [id,m] of Object.entries(source.memory)) if(!state.memory[id] || state.memory[id].updatedAt<=m.updatedAt) state.memory[id]={...m};
+      for(const [id,m] of Object.entries(source.memory)) if(!state.memory[id] || state.memory[id].updatedAt<m.updatedAt || state.memory[id].updatedAt===m.updatedAt && (!state.memory[id].dueAt || m.dueAt)) state.memory[id]={...m};
       for(const d of Object.values(source.drafts)) if(!state.drafts[d.key] || state.drafts[d.key].updatedAt<=d.updatedAt) state.drafts[d.key]=structuredClone(d);
       for(const attempt of source.attempts) {
         const index=state.attempts.findIndex(a=>a.id===attempt.id);
@@ -204,7 +225,7 @@
     state.attempts.sort((a,b)=>a.submittedAt.localeCompare(b.submittedAt) || a.id.localeCompare(b.id));
     return rebuildWrong(state);
   }
-  const api={schema,normalize,shuffle,buildBank,paper,review,emptyState,grade,submit,recognize,validate,merge,rebuildWrong};
+  const api={schema,normalize,shuffle,buildBank,paper,review,emptyState,grade,memoryDueAt,memoryDue,rateMemory,submit,recognize,validate,merge,rebuildWrong};
   if(typeof module!=='undefined' && module.exports) module.exports=api;
   else root.HistoryTraining=api;
 })(typeof window!=='undefined' ? window : globalThis);
