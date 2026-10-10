@@ -11,7 +11,7 @@
   const date=value=>new Date(value).toLocaleString('ko-KR',{timeZone:'Asia/Seoul',year:'numeric',month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
   const uid=()=>`s-${Date.now()}-${Math.random().toString(36).slice(2,10)}`;
   let state=H.emptyState(), storageOK=true, lastSavedRaw=null, tab='memory', session=null, shownAttempt=null;
-  let memoryFilter='due', memoryQueue=[], memoryPosition=0, wrongFilter='open',cloud=null;
+  let memoryFilter='due', memoryQueue=[], memoryPosition=0, memoryMissed=[], memoryRound=1, memoryReady=false, memoryStarted=false, wrongFilter='open',cloud=null;
   function message(text,bad=false) {
     $('#storage-status').textContent=text+(!storageOK&&!text.includes('저장')?' · 브라우저 저장 불가: 기록 백업으로 보관해 주세요.':'');
     $('#storage-status').classList.toggle('save-warning',bad||!storageOK);
@@ -41,18 +41,19 @@
     tab=name;
     document.querySelectorAll('[data-tab]').forEach(b=>name===b.dataset.tab?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current'));
     document.querySelectorAll('.learning-view').forEach(view=>view.hidden=view.id!==`view-${name}`);
-    if(name==='memory') { updateMemoryQueue(); renderMemory(); }
+    if(name==='memory') { if(!memoryReady) updateMemoryQueue(); renderMemory(); }
     if(name==='exams' && !session && !shownAttempt) renderExams();
     if(name==='wrong') renderWrong();
     if(name==='history') renderHistory();
     badge(); icons();
   }
-  function updateMemoryQueue(mix=false) {
+  function updateMemoryQueue() {
     const topic=$('#memory-topic').value;
     memoryQueue=bank.concepts.filter(c=>(topic==='all'||c.topic===Number(topic)) && (memoryFilter==='all'||memoryFilter==='due'&&H.memoryDue(state.memory[c.id])||memoryFilter==='new'&&!state.memory[c.id]||memoryFilter==='hard'&&(state.memory[c.id]?.rating==='hard'||state.wrong[c.id]?.active)));
-    if(mix) memoryQueue=H.shuffle(memoryQueue,uid());
-    memoryQueue.sort((a,b)=>Number(state.memory[b.id]?.rating==='hard')-Number(state.memory[a.id]?.rating==='hard'));
-    memoryPosition=0;
+    memoryPosition=0;memoryMissed=[];memoryRound=1;memoryReady=true;memoryStarted=false;
+  }
+  function pendingMemory() {
+    return memoryMissed.filter(c=>state.memory[c.id]?.rating==='hard');
   }
   function memoryProgress() {
     const known=Object.values(state.memory).filter(m=>m.rating==='known').length;
@@ -61,15 +62,19 @@
   }
   function renderMemory() {
     memoryProgress();
-    $('#memory-empty').hidden=memoryQueue.length>0;
-    $('#memory-tool').hidden=!memoryQueue.length;
-    if(!memoryQueue.length) {
+    const finished=memoryPosition>=memoryQueue.length, pending=pendingMemory();
+    $('#memory-empty').hidden=!finished;
+    $('#memory-tool').hidden=finished;
+    $('#memory-review').hidden=!finished||!pending.length;
+    $('#memory-shuffle').disabled=finished;
+    $('#memory-round-progress').textContent=memoryQueue.length?`${memoryRound}바퀴 · ${memoryPosition} / ${memoryQueue.length}개 확인 · 다시 외울 것 ${pending.length}개`:'';
+    if(finished) {
       const next=bank.concepts.filter(c=>$('#memory-topic').value==='all'||c.topic===Number($('#memory-topic').value))
         .map(c=>state.memory[c.id]).filter(m=>m?.rating==='known').map(H.memoryDueAt).sort()[0];
-      $('#memory-empty').textContent=memoryFilter==='new'?'미확인 카드가 없습니다.':memoryFilter==='hard'?'다시 외울 카드가 없습니다.':`이번 암기를 마쳤습니다.${next?` 다음 복습: ${date(next)}`:''}`;
+      $('#memory-empty').textContent=pending.length?`${memoryRound}바퀴 완료 · 모은 카드 ${pending.length}개`:memoryQueue.length?`${memoryRound}바퀴 완료 · 다시 외울 카드가 없습니다.${next?` 다음 복습: ${date(next)}`:''}`:memoryFilter==='new'?'미확인 카드가 없습니다.':memoryFilter==='hard'?'다시 외울 카드가 없습니다.':`이번 암기를 마쳤습니다.${next?` 다음 복습: ${date(next)}`:''}`;
+      $('#memory-review-label').textContent=`모은 카드 ${pending.length}개 섞어 복습`;
       return;
     }
-    memoryPosition=(memoryPosition+memoryQueue.length)%memoryQueue.length;
     const c=memoryQueue[memoryPosition];
     $('#memory-topic-label').textContent=`주제 ${c.topic} · ${topics[c.topic].title}`;
     $('#memory-position').textContent=`${memoryPosition+1} / ${memoryQueue.length}`;
@@ -81,16 +86,31 @@
     $('#memory-solution').hidden=true;
     $('#memory-reveal').hidden=false;
   }
-  $('#memory-reveal').addEventListener('click',()=>{ $('#memory-solution').hidden=false; $('#memory-reveal').hidden=true; });
+  $('#memory-reveal').addEventListener('click',()=>{
+    if(memoryPosition>=memoryQueue.length) return;
+    memoryStarted=true;$('#memory-solution').hidden=false;$('#memory-reveal').hidden=true;
+  });
   for(const rating of ['hard','known']) $(`#memory-${rating}`).addEventListener('click',()=>{
     const c=memoryQueue[memoryPosition]; if(!c||$('#memory-solution').hidden) return;
     H.rateMemory(bank,state,c.id,rating);save();
-    memoryQueue.splice(memoryPosition,1);
-    if(rating==='hard') memoryQueue.splice(Math.min(memoryPosition+3,memoryQueue.length),0,c);
+    if(rating==='hard') memoryMissed.push(c);
+    memoryPosition++;
     renderMemory();
   });
+  $('#memory-review').addEventListener('click',()=>{
+    const pending=pendingMemory();if(memoryPosition<memoryQueue.length||!pending.length) return;
+    const last=memoryQueue.at(-1)?.id;
+    memoryQueue=H.shuffle(pending,uid());
+    if(memoryQueue.length>1&&memoryQueue[0].id===last) memoryQueue.push(memoryQueue.shift());
+    memoryPosition=0;memoryMissed=[];memoryRound++;memoryStarted=true;renderMemory();
+  });
   $('#memory-topic').addEventListener('change',()=>{updateMemoryQueue();renderMemory();});
-  $('#memory-shuffle').addEventListener('click',()=>{updateMemoryQueue(true);renderMemory();});
+  $('#memory-shuffle').addEventListener('click',()=>{
+    if(memoryPosition>=memoryQueue.length) return;
+    memoryStarted=true;
+    memoryQueue.splice(memoryPosition,memoryQueue.length-memoryPosition,...H.shuffle(memoryQueue.slice(memoryPosition),uid()));
+    renderMemory();
+  });
   document.querySelectorAll('[data-memory-filter]').forEach(b=>b.addEventListener('click',()=>{
     memoryFilter=b.dataset.memoryFilter;
     document.querySelectorAll('[data-memory-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));
@@ -232,7 +252,7 @@
     try {
       if(file.size>25*1024*1024) throw Error('기록 파일이 너무 큽니다.');
       const payload=JSON.parse(await file.text());if(payload.schema!==storageKey) throw Error('이번 암기·혼합 시험의 기록 파일이 아닙니다.');
-      state=H.merge(state,H.validate(payload.state,bank));save();session=null;shownAttempt=null;showTab(tab);
+      state=H.merge(state,H.validate(payload.state,bank));save();session=null;shownAttempt=null;memoryReady=false;showTab(tab);
       message(`기존 기록과 합쳤습니다. 총 ${state.attempts.length}회 풀이 기록${storageOK?'':' · 브라우저 저장 불가: 다시 백업해 주세요.'}`,!storageOK);
     } catch(error) {message(error.message || '파일을 읽지 못했습니다. 기존 기록은 유지됩니다.',true);}
     event.target.value='';
@@ -263,7 +283,7 @@
         if(tab==='history') renderHistory();
         if(tab==='exams'&&!session&&!shownAttempt) renderExams();
         if(shownAttempt && !document.activeElement?.closest('#exam-form')) showResult(shownAttempt.id);
-        memoryProgress();
+        if(memoryReady&&!memoryStarted) {updateMemoryQueue();renderMemory();} else memoryProgress();
       }});
     $('#cloud-retry').addEventListener('click',()=>cloud.sync());
     window.addEventListener('online',()=>cloud.sync());
